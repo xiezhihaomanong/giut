@@ -1,0 +1,230 @@
+
+R version 3.1.0 (2014-04-10) -- "Spring Dance"
+Copyright (C) 2014 The R Foundation for Statistical Computing
+Platform: x86_64-unknown-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> ########################################################################################
+> ########################################################################################
+> ########################################################################################
+> 
+> suppressPackageStartupMessages(require(giut))
+> 
+> computePval <- function(alpha, prop, design, M)
++ # A function to estimate the probability of getting a maximum p-value under
++ # alpha, given the value of alpha, the proportion of genes in each combination
++ # of null/alts, the definition of the null/alts and the proportion of genes
++ # with max p-values above alpha.
++ {
++ 	nullprop <- as.vector(design %*% prop)
++ 	betas <- (M - (1-alpha)*nullprop)/(1-nullprop)
++ 	mult <- (1-betas)*(1-design) + alpha*design
++ 	log(sum( exp(colSums(log(mult))) * prop )/sum(prop))
++ }
+> 
+> ref.iut <- function(..., threshold=0.5) 
++ # This brings everything together. First, it estimates the proportion of genes
++ # in each combination of null/alternative hypotheses. As this estimate isn't
++ # reliable or unbiased, the function then attempts to maximize the p-value by
++ # searching the parameter space around the estimate. This assumes that the
++ # estimate is reasonably close, such that the local maximum is conservative.
++ {
++ 	all.p <- list(...)
++ 	out <- giut:::processPvals(all.p)
++     o <- order(out$p.max, decreasing=TRUE) 
++ 
++ 	# Initializing the obvious constraints for probabilities.
++ 	nc <- 2L^length(all.p) - 1L
++ 	ui <- rbind(diag(nc), rep(-1, nc), -out$design)
++ 	ci <- c(rep(0, nc), -1)
++ 
++ 	# Initializing the proportions.
++ 	theta0 <- giut:::estimateProp(all.p, out$design, threshold=threshold)
++ 
++ 	# Computing pmax for each gene. 
++ 	pval <- numeric(length(out$p.max))
++ 	past <- NULL
++ 	for (i in 1:length(o)) {
++ 		cur.alpha <- out$p.max[o[i]]
++ 		cur.m <- out$m[o[i],]
++ 		
++ 		# Searching for a feasible point close to the theoretical point.
++ 		# This should converge as everything is linear.
++ 		upper.b <- cur.m/(1-cur.alpha)
++ 		cur.ci <- c(ci, -upper.b)
++ 		if (all(ui %*% theta0 > cur.ci)) { 
++ 			theta <- theta0
++ 			past <- NULL
++ 		} else {
++ 			if (is.null(past) || any(ui %*% past <= cur.ci)) { 
++ 				theta <- rep(min(upper.b)/(nc + 1), nc)
++ 			} else {
++ 				theta <- past
++ 			}
++ #			print(paste(sprintf("%.8f", theta), collapse=" "))
++ 			theta <- constrOptim(theta, ui=ui, ci=cur.ci, f=function(prop) {
++ 				diff0 <- theta0 - prop
++ 				sum(diff0 * diff0)
++ 			}, method="Nelder", control=list(reltol=1e-8))$par
++ 			past <- theta
++ 		}
++ 
++ 		# Maximizing it.
++ 		soln <- constrOptim(theta, ui=ui, ci=cur.ci, f=computePval, method="Nelder",
++ 			alpha=cur.alpha, design=out$design, M=cur.m, control=list(fnscale=-1, reltol=1e-8))
++ 		pval[o[i]] <- exp(soln$value)
++ 	}
++ 	return(pval)
++ }
+> 
+> ########################################################################################
+> ########################################################################################
+> ########################################################################################
+> # Just running on a lot of two experiments to test it.
+> 
+> ngenes <- 100
+> checkme <- function(..., threshold=1e-6) {
++ 	ref <- ref.iut(...)
++ 	test <- giut(...)
++ 	stopifnot(all(abs(ref-test) <= (ref+1e-6)*threshold))
++ 	head(ref)
++ }
+> 
+> set.seed(42386332)
+> p1 <- runif(ngenes)
+> p1[1:10] <- rbeta(10, 1, 20)
+> p2 <- runif(ngenes)
+> p2[91:100] <- 0
+> checkme(p1, p2)
+[1] 0.26664999 0.70619648 0.01264665 0.02346302 0.11824524 0.17985885
+> 
+> p1 <- runif(ngenes)
+> p1[1:10] <- 0
+> p2 <- runif(ngenes)
+> p2[51:100] <- rbeta(50, 1, 20)
+> checkme(p1, p2)
+[1] 0.742040980 0.004003023 0.248528956 0.945391598 0.910881361 0.339899051
+> 
+> p1 <- runif(ngenes)
+> p2 <- runif(ngenes)
+> p2[51:100] <- 0
+> checkme(p1, p2)
+[1] 0.1812686 0.4489786 0.5547045 0.9174137 0.1259150 0.2070860
+> 
+> p1 <- runif(ngenes)
+> p2 <- runif(ngenes)
+> checkme(p1, p2)
+[1] 0.1477731 0.2669281 0.9578406 0.3530314 0.5779569 0.2082909
+> 
+> p1 <- runif(1e3)
+> p2 <- runif(1e3)
+> p2[501:1000] <- rbeta(500, 1, 20)
+> checkme(p1, p2)
+[1] 0.2892353 0.5362569 0.9788515 0.2374234 0.5349604 0.7248620
+> 
+> p1 <- runif(1e3)
+> p2 <- runif(1e3)
+> checkme(p1, p2)
+[1] 0.3166124 0.1214346 0.6567258 0.7768917 0.1098847 0.7070437
+> 
+> p1 <- runif(1e3)
+> p2 <- runif(1e3)
+> p2[501:1000] <- 0
+> checkme(p1, p2)
+[1] 0.8814169 0.7212486 0.3940231 0.7372539 0.7773992 0.9423702
+> 
+> p1 <- runif(1e3)
+> p1[1:500] <- 0
+> p2 <- runif(1e3)
+> p2[501:1000] <- rbeta(500, 1, 20)
+> checkme(p1, p2)
+[1] 0.8919278 0.8467037 0.3412180 0.2490994 0.8025734 0.1106871
+> 
+> ##########################################################################################
+> # Three experiments. Loosening the threshold as it tends to not play nice.  For
+> # the worst example below (maximum difference of ~5%), there appears to be
+> # convergence issues throughout various optimisation steps. These originate in
+> # differences in the nmmin trace when computing the p-value (same proportion
+> # values up to 10 dp's, so same starting point). Possibly it occurs when you
+> # step on the boundary between two concavities, where differences in
+> # compilation or precision, etc., decide which way it flips.
+> 
+> compme <- function(...) {
++ 	ref <- ref.iut(...)
++ 	test <- giut(...)
++ 	stuff <- abs(ref-test)/(ref+1e-6)
++ 	return(summary(stuff))
++ }
+> 
+> p1 <- runif(ngenes)
+> p1[1:10] <- 0
+> p2 <- runif(ngenes)
+> p2[91:100] <- rbeta(10, 1, 20)
+> p3 <- runif(ngenes)
+> p3[91:100] <- 0
+> compme(p1, p2, p3)
+     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+0.000e+00 0.000e+00 2.000e-16 1.748e-11 3.000e-16 1.536e-09 
+> 
+> p1 <- runif(ngenes)
+> p1[1:10] <- rbeta(10, 1, 20)
+> p2 <- runif(ngenes)
+> p2[81:100] <- 0
+> p3 <- runif(ngenes)
+> p3[51:100] <- rbeta(10, 1, 20)
+> compme(p1, p2, p3)
+     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+0.000e+00 0.000e+00 1.000e-16 5.351e-11 3.000e-16 1.092e-09 
+> 
+> p1 <- rbeta(ngenes, 1, 20)
+> p2 <- runif(ngenes)
+> p2[81:100] <- 0
+> p3 <- runif(ngenes)
+> p3[51:100] <- rbeta(10, 1, 20)
+> compme(p1, p2, p3)
+    Min.  1st Qu.   Median     Mean  3rd Qu.     Max. 
+0.000000 0.000000 0.000000 0.001145 0.000000 0.056100 
+> 
+> p1 <- runif(ngenes)
+> p2 <- runif(ngenes)
+> p3 <- runif(ngenes)
+> compme(p1, p2, p3)
+     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+0.000e+00 0.000e+00 0.000e+00 1.576e-08 0.000e+00 6.494e-07 
+> 
+> p1 <- runif(ngenes)
+> p1[1:80] <- 0
+> p2 <- runif(ngenes)
+> p3 <- runif(ngenes)
+> compme(p1, p2, p3)
+     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+0.000e+00 0.000e+00 0.000e+00 1.124e-08 0.000e+00 1.124e-06 
+> 
+> p1 <- rbeta(ngenes, 1, 20)
+> p2 <- runif(ngenes)
+> p3 <- runif(ngenes)
+> compme(p1, p2, p3)
+     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+0.000e+00 0.000e+00 1.400e-16 5.765e-12 2.400e-16 1.707e-10 
+> 
+> ##########################################################################################
+> ##########################################################################################
+> ##########################################################################################
+> 
+> 
+> proc.time()
+   user  system elapsed 
+ 94.388   0.235  94.809 
