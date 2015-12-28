@@ -32,7 +32,7 @@ processPvals <- function(pvals)
 	alpha <- do.call(pmax, pvals)
 	m <- sapply(pvals, FUN=function(x) {
 		index <- findInterval(alpha, sort(x))
-		pmin(1-alpha, 1-(index-0.5)/ng)
+		pmin(1-alpha, 1-index/ng)
 	})
 	return(list(design=combos, p.max=alpha, m=m))
 }
